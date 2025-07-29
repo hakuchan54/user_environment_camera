@@ -1,15 +1,36 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF--8">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>カメラとジャイロセンサーのテスト</title>
+    <title>カメラ切替（個別表示）</title>
     <style>
-        body { font-family: sans-serif; text-align: center; }
-        video {
-            width: 45%;
-            border: 1px solid black;
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 1em;
+        }
+        .controls {
+            margin-bottom: 1em;
+        }
+        button {
+            font-size: 1.1em;
+            padding: 10px 15px;
             margin: 5px;
+            cursor: pointer;
+        }
+        .video-wrapper {
+            margin-bottom: 1em;
+            padding: 10px;
+            border: 2px solid #eee;
+            border-radius: 8px;
+        }
+        video {
+            width: 90%;
+            max-width: 400px;
+            background-color: #000;
+            border-radius: 4px;
         }
         #sensor-data {
             margin-top: 20px;
@@ -17,88 +38,122 @@
             border: 1px solid #ccc;
             display: inline-block;
         }
-        button {
-            font-size: 1.2em;
-            padding: 10px 20px;
-            margin: 20px;
-        }
     </style>
 </head>
 <body>
 
-    <h1>カメラとジャイロセンサー</h1>
-    <p>下のボタンを押して、カメラとセンサーの使用を許可してください。</p>
+    <h1>カメラ切替（個別表示）</h1>
 
-    <button id="start-button">開始</button>
-
-    <div>
-        <video id="front-camera" autoplay playsinline></video>
-        <video id="back-camera" autoplay playsinline></video>
+    <div class="controls">
+        <button id="start-button">開始</button>
+        <button id="front-cam-button" style="display:none;">インカメラ表示</button>
+        <button id="back-cam-button" style="display:none;">アウトカメラ表示</button>
     </div>
 
-    <div id="sensor-data">
-        <h2>ジャイロセンサー情報</h2>
-        <p>X軸 (alpha): <span id="alpha">0</span></p>
-        <p>Y軸 (beta): <span id="beta">0</span></p>
-        <p>Z軸 (gamma): <span id="gamma">0</span></p>
+    <div class="video-wrapper">
+        <h2>インカメラ (うちカメラ)</h2>
+        <video id="front-video" playsinline></video>
     </div>
+
+    <div class="video-wrapper">
+        <h2>アウトカメラ (そとカメラ)</h2>
+        <video id="back-video" playsinline></video>
+    </div>
+
+    <div id="sensor-data-container" style="display:none;">
+      <div id="sensor-data">
+          <h2>ジャイロセンサー情報</h2>
+          <p>X軸 (alpha): <span id="alpha">...</span></p>
+          <p>Y軸 (beta): <span id="beta">...</span></p>
+          <p>Z軸 (gamma): <span id="gamma">...</span></p>
+      </div>
+    </div>
+
 
     <script>
         const startButton = document.getElementById('start-button');
-        const frontVideo = document.getElementById('front-camera');
-        const backVideo = document.getElementById('back-camera');
+        const frontCamButton = document.getElementById('front-cam-button');
+        const backCamButton = document.getElementById('back-cam-button');
+        const frontVideo = document.getElementById('front-video');
+        const backVideo = document.getElementById('back-video');
+        const sensorContainer = document.getElementById('sensor-data-container');
 
         const alphaSpan = document.getElementById('alpha');
         const betaSpan = document.getElementById('beta');
         const gammaSpan = document.getElementById('gamma');
 
-        startButton.addEventListener('click', async () => {
-            // --- カメラの処理 ---
-            // 注意: デバイスによっては2つのカメラを同時に有効にできない場合があります。
-            // その場合は、どちらか一方のコードをコメントアウトしてお試しください。
-            try {
-                // インカメラ（自撮り用）
-                const frontStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'user' }
-                });
-                frontVideo.srcObject = frontStream;
+        let currentStream;
 
-                // アウトカメラ（背面）
-                const backStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment' }
+        // 現在のカメラストリームを停止する関数
+        function stopCurrentStream() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => {
+                    track.stop();
                 });
-                backVideo.srcObject = backStream;
+            }
+            // 両方のビデオ表示をクリア
+            frontVideo.srcObject = null;
+            backVideo.srcObject = null;
+        }
+
+        // 指定されたカメラを起動する関数
+        async function startCamera(facingMode) {
+            stopCurrentStream(); // まず現在のストリームを停止
+
+            // 表示先のビデオ要素を選択
+            const videoElement = (facingMode === 'user') ? frontVideo : backVideo;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingMode }
+                });
+                
+                videoElement.srcObject = stream;
+                await videoElement.play();
+                currentStream = stream;
 
             } catch (err) {
-                console.error("カメラの取得に失敗しました: ", err);
-                alert("カメラの取得に失敗しました。エラー: " + err.message);
+                console.error("カメラの起動に失敗:", err);
+                alert(`カメラ(${facingMode})の起動に失敗しました。`);
             }
+        }
 
-            // --- ジャイロセンサーの処理 ---
-            // iOS 13以降では、ユーザーの操作をきっかけに許可を求める必要があります。
-            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        // 開始ボタンの処理
+        startButton.addEventListener('click', async () => {
+            // ① モーションセンサーの許可を求める
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                 try {
-                    const permissionState = await DeviceMotionEvent.requestPermission();
+                    const permissionState = await DeviceOrientationEvent.requestPermission();
                     if (permissionState === 'granted') {
                         window.addEventListener('deviceorientation', handleOrientation);
+                        sensorContainer.style.display = 'block';
                     }
-                } catch (err) {
-                     console.error("モーションセンサーの許可取得に失敗: ", err);
-                     alert("モーションセンサーの許可が得られませんでした。");
+                } catch (error) {
+                    console.error("センサー許可エラー:", error);
                 }
             } else {
-                // Androidなど、許可が不要なデバイスの場合
                 window.addEventListener('deviceorientation', handleOrientation);
+                sensorContainer.style.display = 'block';
             }
+            
+            // ② 最初はアウトカメラを起動
+            await startCamera('environment');
 
-            startButton.style.display = 'none'; // 開始ボタンを隠す
+            // ③ ボタンの表示を切り替え
+            startButton.style.display = 'none';
+            frontCamButton.style.display = 'inline-block';
+            backCamButton.style.display = 'inline-block';
         });
 
+        // カメラ切替ボタンのイベント
+        frontCamButton.addEventListener('click', () => startCamera('user'));
+        backCamButton.addEventListener('click', () => startCamera('environment'));
+
+        // センサー情報を更新
         function handleOrientation(event) {
-            // toFixed(2)で小数点以下2桁に丸めています
-            alphaSpan.textContent = event.alpha.toFixed(2);
-            betaSpan.textContent = event.beta.toFixed(2);
-            gammaSpan.textContent = event.gamma.toFixed(2);
+            alphaSpan.textContent = event.alpha ? event.alpha.toFixed(2) : 'N/A';
+            betaSpan.textContent = event.beta ? event.beta.toFixed(2) : 'N/A';
+            gammaSpan.textContent = event.gamma ? event.gamma.toFixed(2) : 'N/A';
         }
     </script>
 
